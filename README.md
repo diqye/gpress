@@ -1,4 +1,4 @@
-# GPress
+# gpress
 
 一个基于 Monad 组合思想的函数式框架，聚焦于 Request 到 Response 的实现。
 
@@ -12,7 +12,7 @@ router.get("/user", handler)
 router.post("/user", handler)
 ```
 
-GPress 是这样的：
+gpress 是这样的：
 
 ```ts
 // 组合式
@@ -98,9 +98,9 @@ const api:G<Response> = G.path("/api")
 
 ```ts
 // 路由定义
-const userRoutes = G.path("user")
-  .semiBind(G.path("create").post().requestJson())
-  .alt(G.path(":id").get())
+const userRoutes = G.path("/user/create")
+  .post().requestJson().pureText("")
+  .alt(G.get().path("/user").pathOne().pureText("")))
 
 // 生成文档
 const docs = userRoutes.runDocs()
