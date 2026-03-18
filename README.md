@@ -72,6 +72,29 @@ console.log(`🚀 Server running at ${server.url}`)
 
 routes 放静态资源，fetch 放后端接口，一条命令启动全栈。
 
+## 静态资源服务
+
+gpress 也内置了组合式的静态文件服务（目前仅支持 Bun runtime）：
+
+```ts
+import { staticApi } from "gpress/static/bun/staticApi"
+
+const staticFiles = staticApi("./public")
+
+const api: G<Response> = G.path("/api")
+  .semiBind(auth)
+  // ...
+  .alt(staticFiles) // 其他路径走静态服务
+```
+
+`staticApi(dir)` 返回一个 `G<Response>`，支持：
+- GET / HEAD 请求
+- 多级路径映射到文件（如 `/css/app.css` → `./public/css/app.css`）
+- **Range 请求**（断点续传、分段下载）
+- 404 / 416 错误处理
+
+和所有 gpress 路由一样，可以自由组合进 `.alt()` 链路中。
+
 ## 组合模式
 
 `.alt()` 让多条路由并存：

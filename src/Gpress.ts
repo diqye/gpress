@@ -1,8 +1,6 @@
 
 import z from "zod"
 
-type Flatten<T> = { [P in keyof T]: T[P] }
-
 export type Final<A> = {
     cos: "final",
     final: A,
@@ -83,6 +81,12 @@ export  class G<A> {
     public get() {
         return this.semiBindTap(G.get())
     }
+    static head() {
+        return this.matchMethod("HEAD")
+    }
+    public head() {
+        return this.semiBindTap(G.head())
+    }
     static patch() {
         return this.matchMethod("PATCH")
     }
@@ -110,7 +114,7 @@ export  class G<A> {
 
             return {
                 cos: "final",
-                final: xs[0] as string,
+                final: decodeURIComponent(xs[0] as string),
                 restnames: xs.slice(1)
             }
         })
@@ -291,6 +295,7 @@ export  class G<A> {
             }
         })
     }
+    
     public many():G<A[]> {
         return G.fromHandler(async (req,ctx):Promise<Final<A[]>> =>{
             let xs: A[] = []
@@ -315,9 +320,9 @@ export  class G<A> {
 
     public log(prefix="") {
         return G.fromHandler(async (req,ctx)=>{
-            console.log(prefix,ctx.pathnames)
+            // console.log(prefix,ctx.pathnames)
             const final = await this.handler(req,ctx)
-            console.log("final=",final)
+            console.log(prefix,final)
             return final
         })
     }
