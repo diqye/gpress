@@ -1,4 +1,3 @@
-
 import z from "zod"
 
 export type Final<A> = {
@@ -43,7 +42,7 @@ export  class G<A> {
     static pureText(text:string,init?: ResponseInit) {
         return this.pure(new Response(text,init))
     }
-    static end(response:Response):G<Response> {
+    static end(response:Response):G<never> {
         return this.fromHandler((req,context)=>{
             return {
                 cos: "end",
@@ -193,7 +192,7 @@ export  class G<A> {
     public request() {
         return this.semiBind(G.request())
     }
-    static requestJson() {
+    static requestJson():G<unknown> {
         return this.request().bind(async req=>{
             try {
                 return G.pure(await req.json())
@@ -210,7 +209,7 @@ export  class G<A> {
     }
 
     static zodParse<S extends z.ZodType>(schema:S,transEnd?:(err:any)=>any) {
-        return (json:any):G<z.output<S>> => {
+        return (json:unknown):G<z.output<S>> => {
             const parsed = schema.safeParse(json)
             if(parsed.success == false) {
                 if(transEnd) {
@@ -320,9 +319,9 @@ export  class G<A> {
 
     public log(prefix="") {
         return G.fromHandler(async (req,ctx)=>{
-            // console.log(prefix,ctx.pathnames)
+            console.log(prefix,ctx.pathnames)
             const final = await this.handler(req,ctx)
-            console.log(prefix,final)
+            console.log(prefix + "_end",final)
             return final
         })
     }
