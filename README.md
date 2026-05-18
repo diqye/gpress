@@ -1,80 +1,272 @@
 # gpress
 
-一个基于 Monad 组合思想的函数式框架，聚焦于 Request 到 Response 的实现。
+路由解析器组合子 —— 把路由当作可组合的值，而不是配置声明。
 
 ## 核心思想
 
-传统路由是这样的：
+传统路由库是**声明式配置**：
 
 ```ts
-// 配置式
-router.get("/user", handler)
+router.get("/user/:id", handler)
 router.post("/user", handler)
 ```
 
-gpress 是这样的：
+路由是注册在 router 上的副作用，不可组合、不可复用、不可测试。
+
+gpress 是**组合式**的：路由是值，用函数组合子拼装。
 
 ```ts
-// 组合式
-const api = G.path("/user")
-  .get()
-  .bind(getUser)
+const getUser = G.path("/user").pathOne().get().bind(async id => {
+  const user = await db.findUser(id)
+  return G.pureJson(user)
+})
 ```
 
-把路由、提取数据、业务逻辑、响应，都变成**可组合的函数**。
+`getUser` 是一个值，可以复用、组合、测试，不需要 router 实例。
 
-### 路由组合的三状态
+## 三状态模型
 
-- `G.pure` - 成功，携带值继续传递
-- `G.fail` - 不匹配，尝试下一个
-- `G.end` - 响应已发送，终止
+每个 `G<A>` 的执行结果有三种状态：
 
-### bind：异步组合
+| 状态 | 含义 | 类比 |
+|------|------|------|
+| `final` | 成功，携带值 A | 正则匹配成功 |
+| `continue` | 不匹配，回溯尝试下一条 | 正则回溯 |
+| `end` | 响应已发送，终止链路 | 短路返回 |
 
-`.bind()` 支持 async，可以链式处理异步操作：
+`continue` 是 gpress 与中间件 `next()` 的关键区别。`next()` 只能"继续"，无法区分"我不匹配"和"我匹配但出错了"。`continue` 让 `alt` 具备真正的**回溯能力**。
+
+## 路由匹配
+
+### path — 前缀匹配
+
+`path` 匹配路径前缀，剩余段传递给后续组合子。这是组合式路由的基础：逐段匹配，逐步提取。
 
 ```ts
-G.path("/api")
-  .post()
+G.path("/api").pathOne().get()
+// GET /api/123  → 匹配 /api，pathOne 提取 "123"
+// GET /api      → 匹配 /api，pathOne 不匹配，整体 continue
+```
+
+如果需要精确匹配，在末尾加 `.nullPath()`：
+
+```ts
+G.path("/api").nullPath()  // 只匹配 /api，不匹配 /api/xxx
+```
+
+### ePath — 精确匹配 + 参数提取
+
+`ePath` 一步完成：精确匹配 + 命名参数提取。不需要 `nullPath()`，不需要手动组合 `pathOne()`。
+
+```ts
+G.ePath("/api/user/:id/:scope/xx")
+// GET /api/user/42/admin/xx  → { id: "42", scope: "admin" }
+// GET /api/user/42/admin/yy  → continue（字面量 xx 不匹配）
+// GET /api/user/42           → continue（段数不够）
+// GET /api/user/42/admin/xx/extra → continue（多出段，精确匹配）
+```
+
+`path` 和 `ePath` 的选择：
+
+| 场景 | 用 |
+|------|------|
+| 需要逐步提取、逐步组合 | `path` + `pathOne` |
+| 路径模式明确，一次提取参数 | `ePath` |
+
+### pathOne — 提取单段
+
+```ts
+G.path("/api").pathOne()          // 提取任意一段
+G.path("/api").pathOne("user")    // 匹配字面量 "user"，或提取一段
+```
+
+### restpaths — 获取剩余路径
+
+```ts
+G.path("/files").restpaths()  // GET /files/a/b/c → ["a", "b", "c"]
+```
+
+### many — 重复匹配
+
+```ts
+G.pathOne().many()  // 匹配所有路径段 → string[]
+```
+
+## HTTP 方法
+
+```ts
+G.path("/api").get()
+G.path("/api").post()
+G.path("/api").put()
+G.path("/api").patch()
+G.path("/api").delete()
+G.path("/api").head()
+```
+
+## 数据提取
+
+```ts
+.request()       // Request 对象
+.requestJson()   // 解析 JSON body，解析失败自动返回 400
+.headers()       // Headers 对象
+.requestUrl()    // URL 对象
+```
+
+### Zod 验证
+
+```ts
+G.path("/api").post()
   .requestJson()
-  .zodParse(bodySchema) // zod 验证 json
-  .bind(async (body) => {
-    const user = await db.create(body)
+  .zodParse(z.object({ name: z.string(), age: z.number() }))
+  // 类型自动推断为 { name: string; age: number }
+```
+
+## 组合子
+
+### bind — 链式异步组合
+
+```ts
+G.path("/api").pathOne()
+  .bind(async id => {
+    const user = await db.findUser(id)
     return G.pureJson(user)
   })
 ```
 
-## 启动（全栈）
+### map — 值变换
+
+```ts
+G.pathOne().map(id => id.toUpperCase())
+```
+
+### alt — 路由回溯
+
+```ts
+const routes = getUserRoute
+  .alt(createUserRoute)
+  .alt(deleteUserRoute)
+```
+
+第一条 `continue` 就尝试下一条，`final` 或 `end` 则停止。
+
+### optional — 可选匹配
+
+```ts
+G.pathOne().optional()  // 匹配失败返回 undefined 而不是 continue
+```
+
+### semiBindTap / semiBind / semiBindKey
+
+```ts
+.semiBindTap(g)   // 先跑 g，成功后丢弃 g 的值，保留原值
+.semiBind(g)      // 丢弃原值，使用 g 的值
+.semiBindKey("user", g)  // 将 g 的值合并到对象的 user 字段
+```
+
+## 中间件
+
+gpress 没有独立的中间件概念。中间件就是 `G<A>`，用现有组合子实现。
+
+### Before — semiBindTap
+
+`semiBindTap` 先跑前置逻辑，成功则继续，`end` 则短路，`continue` 则回溯。
+
+```ts
+const auth = G.request().bind(req => {
+  const token = req.headers.get("authorization")
+  if (!token) return G.endJson({ error: "unauthorized" }, { status: 401 })
+  return G.pure(verify(token))
+})
+
+// 使用：/api 开头，auth 通过后才走后续路由
+G.path("/api").semiBindTap(auth).semiBind(
+  G.ePath("user/:id").bind(({ id }) => getUser(id))
+  .alt(G.ePath("order/:id").bind(({ id }) => getOrder(id)))
+  .alt(G.ePath("product/:id").bind(({ id }) => getProduct(id)))
+)
+```
+
+### After — onFinal
+
+`onFinal` 拦截最终结果，可以修改 `responseHeaders`、替换 `response`、记录日志等。
+
+```ts
+// CORS
+const withCors = <A>(g: G<A>): G<A> => g.onFinal(final => ({
+  ...final,
+  responseHeaders: { ...final.responseHeaders, "Access-Control-Allow-Origin": "*" }
+}))
+
+// 响应日志
+const withLog = <A>(g: G<A>): G<A> => g.onFinal(final => {
+  if (final.cos === "end") console.log(`response: ${final.response.status}`)
+  return final
+})
+
+// 统一错误格式
+const withErrorHandler = <A>(g: G<A>): G<A> => g.onFinal(final => {
+  if (final.cos === "end" && final.response.status >= 500) {
+    return { ...final, response: Response.json({ error: "internal" }, { status: 500 }) }
+  }
+  return final
+})
+```
+
+组合使用：
+
+```ts
+auth
+  .semiBindTap(apiRoutes)
+  .onFinal(withCors)
+  .onFinal(withLog)
+```
+
+### 为什么不用回调式中间件
+
+gpress 的组合子就是中间件。`semiBindTap` 是 before，`onFinal` 是 after，`alt` 是 fallback。不需要 `app.use()`，不需要中间件栈，不需要 `next()`。每一步都是类型安全的组合。
+
+## 响应构造
+
+```ts
+G.pureJson(obj, init?)    // 成功，返回 JSON 响应
+G.pureText(text, init?)   // 成功，返回文本响应
+G.end(response)           // 直接终止，返回 Response
+G.endJson(obj, init?)     // 直接终止，返回 JSON Response
+```
+
+## 运行
+
+```ts
+// 返回 Final<A>，自行处理
+const result = await route.run(request)
+
+// 自动处理：continue → 404，end/final → Response
+const response = await route.runWith404(request)
+```
+
+## 启动（Bun 全栈）
 
 ```ts
 import { serve } from "bun"
 import index from "./index.html"
 import { api } from "./api"
-import mp4 from "../public/video.mp4"
 
 const server = serve({
   routes: {
-    // 静态资源
     "/": index,
-    "/video.mp4": Bun.file(mp4)
   },
   port: 7799,
   development: process.env.NODE_ENV !== "production" && {
     hmr: true,
     console: true,
   },
-  // 后端接口
   fetch: req => api.runWith404(req),
 })
-
-console.log(`🚀 Server running at ${server.url}`)
 ```
 
-routes 放静态资源，fetch 放后端接口，一条命令启动全栈。
+routes 放静态资源，fetch 放后端接口。
 
 ## 静态资源服务
-
-gpress 也内置了组合式的静态文件服务（目前仅支持 Bun runtime）：
 
 ```ts
 import { staticApi } from "gpress/static/bun/staticApi"
@@ -83,50 +275,17 @@ const staticFiles = staticApi("./public")
 
 const api: G<Response> = G.path("/api")
   .semiBind(auth)
-  // ...
-  .alt(staticFiles) // 其他路径走静态服务
+  .alt(staticFiles)
 ```
 
-`staticApi(dir)` 返回一个 `G<Response>`，支持：
-- GET / HEAD 请求
-- 多级路径映射到文件（如 `/css/app.css` → `./public/css/app.css`）
-- **Range 请求**（断点续传、分段下载）
-- 404 / 416 错误处理
+支持 GET/HEAD、多级路径、Range 请求（断点续传）、404/416 错误处理。
 
-和所有 gpress 路由一样，可以自由组合进 `.alt()` 链路中。
+## userData 和 responseHeaders
 
-## 组合模式
+`userData` 在组合子之间传递任意数据（如认证信息），`responseHeaders` 累积响应头，最终由 `runWith404` 写入 Response。
 
-`.alt()` 让多条路由并存：
+`userData` 类型为 `any`，这是务实选择。泛型化会导致每个组合子的类型签名爆炸，得不偿失。
 
-```ts
-// /api/user/xxx
-// /api/order/xxx
-// /api/product/xxx
-const api:G<Response> = G.path("/api")
-  .semiBind(auth)
-  .semiBind(
-    userRoutes
-    .alt(orderRoutes)
-    .alt(productRoutes)
-  )
-```
+## 依赖
 
-## 静态类型
-所有函数均实现了严谨的类型，让你在自由组合的时候类型不丢失。
-
-## 文档生成
-
-同一套组合子，可以生成接口文档：
-
-```ts
-// 路由定义
-const userRoutes = G.path("/user/create")
-  .post().requestJson().pureText("")
-  .alt(G.get().path("/user").pathOne().pureText("")))
-
-// 生成文档
-const docs = userRoutes.runDocs()
-```
-
-组合方式不变，runDocs 直接解析组合子输出 API 文档。
+- `zod` — Schema 验证
