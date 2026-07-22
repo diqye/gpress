@@ -149,20 +149,36 @@ export  class G<A> {
     public pathOne(name?:string) {
         return this.semiBind(G.pathOne(name))
     }
-    static ePath(pattern: string): G<Record<string, string>> {
+    static exactPath(pattern: string): G<Record<string, string>> {
         let xs = pattern.split("/")
         if (xs[0] == "") xs = xs.slice(1)
-        const segments = xs.map(s =>
-            s.startsWith(":") ? { type: "param" as const, name: s.slice(1) }
-                              : { type: "literal" as const, value: s }
-        )
+
+        const wildcardIndex = xs.findIndex(s => s.startsWith("*"))
+        if (wildcardIndex !== -1 && wildcardIndex !== xs.length - 1) {
+            throw new Error('exactPath wildcard must be the last segment, e.g. "/*rest"')
+        }
+
+        const segments = xs.map(s => {
+            if (s.startsWith(":")) return { type: "param" as const, name: s.slice(1) }
+            if (s.startsWith("*")) return { type: "rest" as const, name: s.slice(1) }
+            return { type: "literal" as const, value: s }
+        })
+
         return this.fromHandler((req, context): Final<Record<string, string>> => {
             const ctx_xs = context.pathnames
-            if (ctx_xs.length !== segments.length) return {
+            const hasRest = segments[segments.length - 1]?.type === "rest"
+
+            if (!hasRest && ctx_xs.length !== segments.length) return {
                 responseHeaders: context.responseHeaders,
                 userData: context.userData,
                 cos: "continue"
             }
+            if (hasRest && ctx_xs.length < segments.length - 1) return {
+                responseHeaders: context.responseHeaders,
+                userData: context.userData,
+                cos: "continue"
+            }
+
             const params: Record<string, string> = {}
             for (let i = 0; i < segments.length; i++) {
                 const seg = segments[i]!
@@ -172,8 +188,19 @@ export  class G<A> {
                         userData: context.userData,
                         cos: "continue"
                     }
-                } else {
+                    continue
+                }
+                if (seg.type === "param") {
                     params[seg.name] = decodeURIComponent(ctx_xs[i]!)
+                    continue
+                }
+                params[seg.name] = ctx_xs.slice(i).map(decodeURIComponent).join("/")
+                return {
+                    cos: "final",
+                    final: params,
+                    restnames: [],
+                    responseHeaders: context.responseHeaders,
+                    userData: context.userData,
                 }
             }
             return {
@@ -185,8 +212,14 @@ export  class G<A> {
             }
         })
     }
+    public exactPath(pattern: string) {
+        return this.semiBind(G.exactPath(pattern))
+    }
+    static ePath(pattern: string) {
+        return this.exactPath(pattern)
+    }
     public ePath(pattern: string) {
-        return this.semiBind(G.ePath(pattern))
+        return this.exactPath(pattern)
     }
 
     static path(path:string) : G<string[]> {

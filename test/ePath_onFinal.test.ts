@@ -1,7 +1,7 @@
 import { describe, test, expect } from "bun:test"
 import { G } from "../src/Gpress"
 
-describe("G.ePath", () => {
+describe("G.exactPath / G.ePath", () => {
   test("exact match with no params", async () => {
     const handler = G.ePath("/api/user")
     const req = new Request("http://localhost/api/user")
@@ -85,6 +85,37 @@ describe("G.ePath", () => {
 
   test("composes with ePath as instance method", async () => {
     const handler = G.path("/api").ePath("user/:id")
+    const req = new Request("http://localhost/api/user/123")
+    const result = await handler.run(req)
+    expect(result.cos).toBe("final")
+    if (result.cos === "final") {
+      expect(result.final).toEqual({ id: "123" })
+    }
+  })
+
+  test("supports rest wildcard as last segment", async () => {
+    const handler = G.exactPath("/files/*rest")
+    const req = new Request("http://localhost/files/xxxx/xxx/x")
+    const result = await handler.run(req)
+    expect(result.cos).toBe("final")
+    if (result.cos === "final") {
+      expect(result.final).toEqual({ rest: "xxxx/xxx/x" })
+      expect(result.restnames).toEqual([])
+    }
+  })
+
+  test("supports empty rest wildcard", async () => {
+    const handler = G.exactPath("/files/*rest")
+    const req = new Request("http://localhost/files")
+    const result = await handler.run(req)
+    expect(result.cos).toBe("final")
+    if (result.cos === "final") {
+      expect(result.final).toEqual({ rest: "" })
+    }
+  })
+
+  test("exactPath aliases old ePath behavior", async () => {
+    const handler = G.exactPath("/api/user/:id")
     const req = new Request("http://localhost/api/user/123")
     const result = await handler.run(req)
     expect(result.cos).toBe("final")
