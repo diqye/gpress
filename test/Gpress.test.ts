@@ -173,6 +173,32 @@ describe("G.alt", () => {
   })
 })
 
+describe("G.alts", () => {
+  test("tries branches left to right", async () => {
+    const handler = G.alts(
+      G.path("a").get().bind(() => G.pureJson({ a: 1 })),
+      G.path("b").get().bind(() => G.pureJson({ b: 2 })),
+      G.path("c").get().bind(() => G.pureJson({ c: 3 })),
+    )
+
+    const resA = await handler.run(new Request("http://localhost/a", { method: "GET" }))
+    expect(resA.cos).toBe("final")
+
+    const resC = await handler.run(new Request("http://localhost/c", { method: "GET" }))
+    expect(resC.cos).toBe("final")
+
+    // 全不匹配
+    const resD = await handler.run(new Request("http://localhost/d", { method: "GET" }))
+    expect(resD.cos).toBe("continue")
+  })
+
+  test("empty args is continue (zero)", async () => {
+    const handler = G.alts()
+    const res = await handler.run(new Request("http://localhost/x"))
+    expect(res.cos).toBe("continue")
+  })
+})
+
 describe("G.nullPath", () => {
   test("matches empty path", async () => {
     const handler = G.path("api").nullPath()

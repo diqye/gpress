@@ -65,7 +65,7 @@ export  class G<A> {
     static endJson(obj:any,init?: ResponseInit) {
         return this.end(Response.json(obj,init))
     }
-    static fail<A>() {
+    static zero<A>() {
         return this.fromHandler((req,context)=>{
             return {cos: "continue"} as Final<A>
         })
@@ -251,8 +251,8 @@ export  class G<A> {
     }
     static nullPath() {
         return G.restpaths().bind(xs=>{
-            if(xs.length != 0) return G.fail()
-            return G.empty()
+            if(xs.length != 0) return G.zero()
+            return G.unit()
         })
     }
     public nullPath() {
@@ -367,7 +367,7 @@ export  class G<A> {
     public zodParse<S extends z.ZodType>(schema:S) {
         return this.bind(G.zodParse(schema))
     }
-    static empty():G<void> {
+    static unit():G<void> {
         return G.pure(void 0)
     }
 
@@ -420,6 +420,10 @@ export  class G<A> {
         })
     }
 
+    // G.zero 是 alt 的左单位元：zero.alt(g) 等价于 g，空参退化为不匹配
+    static alts<A>(...gs: G<A>[]): G<A> {
+        return gs.reduce<G<A>>((acc, g) => acc.alt(g), G.zero<A>())
+    }
     public alt<B>(g:G<B>):G<A|B> {
         return G.fromHandler(async (req,ctx):Promise<Final<A|B>> =>{
             const final = await this.handler(req,ctx)

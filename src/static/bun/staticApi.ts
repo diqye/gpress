@@ -3,7 +3,7 @@ import * as p from "path"
 
 
 export const staticApi: (serveDir:string) => G<Response> = serveDir =>
-G.empty()
+G.unit()
 .semiBind(G.get().alt(G.head()))
 .semiBind(G.pathOne().many())
 .bind(paths => G.headers().bind(async headers=> {
