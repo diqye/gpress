@@ -2,6 +2,56 @@
 
 路由解析器组合子 —— 把路由当作可组合的值，而不是配置声明。
 
+## usage
+```ts
+export const api: G<Response> = G.path("/api").semiBind(G.alts(
+  G.path("/course").semiBind(staticApi(COURSEWARE_ROOT)),
+  G.ePath("/version").get().bind(version),
+
+  // /logs:Basic auth(halfpencil),独立凭据
+  G.path("/logs").semiBind(logsGuard(() => G.alts(
+    G.ePath("/http").get().bind(logsHttp),
+    G.ePath("/app").get().bind(logsApp),
+  ))),
+
+  // /x:cookie auth(jx_token),全部业务路由收在这一前缀,auth 只写一次
+  G.path("/x").semiBind(authed((token) => G.alts(
+    G.ePath("/courseware/:id").get().bind(readCourseware),
+    G.ePath("/courseware/:id").put().bind(writeCourseware),
+    G.ePath("/courseware/:id/tts").post().bind(ttsNode),
+    G.ePath("/courseware/:id/tts-batch").post().bind(startTtsBatch),
+    G.ePath("/courseware/:id/tts-batch").get().bind(ttsBatchProgress),
+    G.ePath("/courseware/:id/output").get().bind(listOutputFiles),
+    G.ePath("/courseware/:id/publish").post().bind(startPublish(token)),
+    G.ePath("/courseware/:id/publish/status").get().bind(publishStatus),
+    G.ePath("/import/:id/detail").get().bind(importDetail(token)),
+    G.ePath("/import/:id/extract").post().bind(importExtract(token)),
+    G.ePath("/audio-notes").get().bind(readAudioNotes),
+    G.ePath("/audio-notes").put().bind(writeAudioNotes),
+    G.ePath("/models").get().bind(models),
+  ))),
+));
+
+const authed = (make: (token: string) => G<Response>): G<Response> =>
+  G.request().bind((request) => {
+    const token = new Bun.CookieMap(request.headers.get("cookie") ?? "").get("token");
+    return token ? make(token) : G.endJson({ error: "未登录" }, { status: 401 });
+});
+serve({
+  routes: {
+    // gpress API
+    "/api/*": (req, server) => api.runWith404(req,server),
+
+  },
+
+
+  development: process.env.NODE_ENV !== "production" && {
+    hmr: true,
+    console: true,
+  },
+});
+```
+
 ## 核心思想
 
 传统路由库是**声明式配置**：
