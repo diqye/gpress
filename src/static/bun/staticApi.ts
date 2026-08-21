@@ -1,5 +1,5 @@
 import { G } from "../../Gpress";
-import * as p from "path"
+import * as p from "path";
 
 
 export const staticApi: (serveDir:string) => G<Response> = serveDir =>
@@ -7,7 +7,12 @@ G.unit()
 .semiBind(G.get().alt(G.head()))
 .semiBind(G.pathOne().many())
 .bind(paths => G.headers().bind(async headers=> {
-    const filePath = p.join(serveDir,...paths)
+    const base = p.resolve(serveDir)
+    const filePath = p.resolve(base, ...paths)
+    // 路径穿越防护:resolve 后必须仍在 serveDir 内
+    if (filePath !== base && !filePath.startsWith(base + p.sep)) {
+        return G.pureText("Forbidden", { status: 403 })
+    }
     const file = Bun.file(filePath)
     const existsFile = await file.exists()
     if(existsFile == false) {
