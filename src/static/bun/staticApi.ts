@@ -19,10 +19,17 @@ G.unit()
         return G.pureText("File not font",{status: 404})
     }
     const fileSize = file.size
+    // Bun 嗅探的 text/* 类型不带 charset，浏览器只能猜编码，中文有乱码风险
+    const contentType =
+        file.type.startsWith("text/") && !file.type.includes("charset")
+            ? `${file.type};charset=utf-8`
+            : file.type
 
     if(headers.has("range") == false) {
         return G.pure(
-            new Response(file)
+            contentType
+                ? new Response(file, { headers: { "Content-Type": contentType } })
+                : new Response(file)
         )
     }
 
@@ -52,7 +59,8 @@ G.unit()
         headers: {
             "Content-Range": `bytes ${start}-${end}/${fileSize}`,
             "Accept-Ranges": "bytes",
-            "Content-Length": contentLength.toString()
+            "Content-Length": contentLength.toString(),
+            ...(contentType ? { "Content-Type": contentType } : {})
         }
     }))
 }))

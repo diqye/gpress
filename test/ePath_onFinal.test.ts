@@ -63,6 +63,26 @@ describe("G.exactPath / G.ePath", () => {
     }
   })
 
+  test("malformed percent sequence in param returns raw string, not throw", async () => {
+    const handler = G.ePath("/api/user/:name")
+    const req = new Request("http://localhost/api/user/%E9")
+    const result = await handler.run(req)
+    expect(result.cos).toBe("final")
+    if (result.cos === "final") {
+      expect(result.final).toEqual({ name: "%E9" })
+    }
+  })
+
+  test("malformed percent sequence in rest keeps raw string", async () => {
+    const handler = G.exactPath("/files/*rest")
+    const req = new Request("http://localhost/files/a/%E9/b")
+    const result = await handler.run(req)
+    expect(result.cos).toBe("final")
+    if (result.cos === "final") {
+      expect(result.final).toEqual({ rest: "a/%E9/b" })
+    }
+  })
+
   test("restnames is empty on exact match", async () => {
     const handler = G.ePath("/api/user/:id")
     const req = new Request("http://localhost/api/user/123")

@@ -41,6 +41,16 @@ describe("G.pathOne", () => {
     const result = await handler.run(req)
     expect(result.cos).toBe("continue")
   })
+
+  test("malformed percent sequence returns raw string, not throw", async () => {
+    const handler = G.path("user").pathOne()
+    const req = new Request("http://localhost/user/%E9")
+    const result = await handler.run(req)
+    expect(result.cos).toBe("final")
+    if (result.cos === "final") {
+      expect(result.final).toBe("%E9")
+    }
+  })
 })
 
 describe("G.get/post/put/patch/delete", () => {

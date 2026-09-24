@@ -18,6 +18,15 @@ export type Final<A> = {
 }
 
 type MaybePromise<T> = T | Promise<T>
+
+// 畸形百分号序列(如 %E9)会让 decodeURIComponent 抛 URIError；返回原串让路由落到 404/参数校验而非 500
+function safeDecode(s: string): string {
+    try {
+        return decodeURIComponent(s)
+    } catch {
+        return s
+    }
+}
 export type GHandler<A> = (reqeust:Request,context:{
     requestUrl: URL,
     pathnames: string[],
@@ -139,7 +148,7 @@ export  class G<A> {
 
             return {
                 cos: "final",
-                final: decodeURIComponent(xs[0] as string),
+                final: safeDecode(xs[0] as string),
                 restnames: xs.slice(1),
                 responseHeaders: context.responseHeaders,
                 userData: context.userData,
@@ -191,10 +200,10 @@ export  class G<A> {
                     continue
                 }
                 if (seg.type === "param") {
-                    params[seg.name] = decodeURIComponent(ctx_xs[i]!)
+                    params[seg.name] = safeDecode(ctx_xs[i]!)
                     continue
                 }
-                params[seg.name] = ctx_xs.slice(i).map(decodeURIComponent).join("/")
+                params[seg.name] = ctx_xs.slice(i).map(safeDecode).join("/")
                 return {
                     cos: "final",
                     final: params,
