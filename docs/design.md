@@ -9,7 +9,6 @@
 | `exactPath("/user/:id")` | path + params |
 | `.get()` / `.post()` | method |
 | `.requestJson()` | 需要 JSON body |
-| `.zodParse(schema)` | 请求体 schema |
 | `.bind(fn)` | 黑盒,需手动声明产出 |
 
 方案:给 `G` 加 `meta` 字段,组合子自动积累元数据,`bind` 的产出用 `.responseSchema()` 手动声明。
@@ -42,4 +41,4 @@ interface RouteMeta {
 }
 ```
 
-每个组合子(path、get、zodParse 等)创建新 G 时合并 meta,`bind` 不添加 meta 但保留已有的。文档生成只依赖结构化部分,不依赖黑盒逻辑。
+每个组合子(path、get 等)创建新 G 时合并 meta,`bind` 不添加 meta 但保留已有的。文档生成只依赖结构化部分,不依赖黑盒逻辑。

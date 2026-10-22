@@ -12,7 +12,7 @@ const hello = G.ePath("/hello/:name").get()
 ## 快速开始
 
 ```bash
-bun add @diqye/gpress   # 未发布,先用 bun add github:diqye/gpress
+bun add @diqye/gpress   # npm 未发布,从 GitHub 安装: bun add github:diqye/gpress#v0.1.0
 ```
 
 ```ts
@@ -27,7 +27,7 @@ Bun.serve({ fetch: (req) => hello.runWith404(req) })
 // GET /hello      → 404
 ```
 
-只依赖 Web 标准 `Request` / `Response`,任何运行时都能跑(校验依赖 zod)。
+零依赖,只依赖 Web 标准 `Request` / `Response`,任何运行时都能跑。校验、业务逻辑的组合子由 app 层用 `bind` 自己写,几行的事(校验推荐 zod,见「校验」一节)。
 
 ## 核心思想
 
@@ -77,7 +77,8 @@ const listUsers = (): G<Response> =>
 const authed = (make: (auth: Auth) => G<Response>): G<Response> =>
   G.request().bind((req) => {
     const auth = verify(req)
-    return auth ? make(auth) : G.endJson({ error: "未登录" }, { status: 401 })
+    if (!auth) throw G.error({ httpcode: 401, code: "UNAUTHORIZED", message: "未登录" })
+    return make(auth)
   })
 
 // 组合树:全部路由长在一棵树上
@@ -89,7 +90,7 @@ export const api: G<Response> = G.path("/api").semiBind(G.alts(
   authed((auth) => G.alts(
     G.ePath("/auth/me").get().bind(() => G.pureJson(auth)),
     G.ePath("/users").get().bind(listUsers),
-    G.ePath("/users").post().requestJson().zodParse(UserSchema).bind(createUser),
+    G.ePath("/users").post().requestJson().bind(zodParse(UserSchema)).bind(createUser),
     G.ePath("/users/:name").delete().bind(({ name }) => removeUser(auth, name!)),
   )),
 ))
@@ -129,16 +130,9 @@ G.path("/api").get()   // .post() .put() .patch() .delete() .head() 同理
 .requestJson()    // JSON body,解析失败自动 400
 .headers()        // Headers 对象
 .requestUrl()     // URL 对象
-.zodParse(schema) // Zod 校验,失败自动 400,成功后类型自动收窄
 ```
 
-```ts
-G.ePath("/user").post()
-  .requestJson()
-  .zodParse(z.object({ name: z.string(), age: z.number() }))
-  .bind(async ({ name, age }) => G.pureJson(await createUser(name, age)))
-  // 此处类型已推断为 { name: string; age: number }
-```
+Body 校验不内置,见「校验:推荐 zod」。
 
 ### 组合子
 
@@ -167,8 +161,56 @@ G.endJson(obj, init?)           // end:直接终止,返回 JSON Response
 
 ```ts
 const final   = await route.run(request)          // 返回 Final<A>,自行处理
-const response = await route.runWith404(request)  // continue → 404,其余 → Response
+const response = await route.runWith404(request)  // continue → 404;异常统一兑底,见「错误处理」
 ```
+
+## 校验:推荐 zod
+
+不内置校验——不为此拖依赖进库。zod 的 `safeParse` + `G.pure`,几行就是一个类型安全的校验组合子:
+
+```ts
+import z from "zod"
+
+const zodParse = <S extends z.ZodType>(schema: S) =>
+  (json: unknown): G<z.output<S>> => {
+    const parsed = schema.safeParse(json)
+    if (!parsed.success)
+      throw G.error({ httpcode: 400, code: "VALIDATION", message: z.prettifyError(parsed.error) })
+    return G.pure(parsed.data)
+  }
+
+G.ePath("/user").post()
+  .requestJson()
+  .bind(zodParse(z.object({ name: z.string(), age: z.number() })))
+  .bind(async ({ name, age }) => G.pureJson(await createUser(name, age)))
+  // 此处类型已推断为 { name: string; age: number }
+```
+
+## 错误处理
+
+业务错误与预期外异常都走异常通道,handler 里不写 try/catch。
+
+**业务错误 `throw G.error({...})`**——返回 `HttpError` 实例(导出),任意深度的普通函数都能抛,不必层层包装成 G。`httpcode` 省略时默认 500:
+
+```ts
+const postCompose = (id: string): G<Response> =>
+  G.unit().bind(async () => {
+    const state = await dramaState(id)
+    if (!state) throw G.error({ httpcode: 404, code: "DRAMA_NOT_FOUND", message: "短剧不存在" })
+    // compose 内部也能 throw G.error({...}),一路冒泡到边界
+    return G.pureJson(await compose(id, state.storyboard))
+  })
+```
+
+**`runWith404` 统一兜底**——`HttpError` 转 `{code, message}` + 对应 httpcode,其余异常 log 后转 500:
+
+```ts
+const response = await api.runWith404(req)
+// throw G.error({httpcode: 404, code: "DRAMA_NOT_FOUND", ...}) → 404 {code: "DRAMA_NOT_FOUND", message: "短剧不存在"}
+// throw new Error("boom") → 500 {code: "INTERNAL", message: "Internal Server Error"},console.error 详情
+```
+
+注意:错误响应走异常通道,拿不到链上累积的 responseHeaders(如 CORS 头),也不经过 `onFinal`;需要这些时用 `endJson` 短路。
 
 ## 中间件 = 组合子
 
@@ -179,7 +221,8 @@ gpress 没有独立的中间件概念，中间件就是 `G<A>`,用现有组合�
 ```ts
 const auth = G.request().bind((req) => {
   const token = req.headers.get("authorization")
-  return token ? G.pure(verify(token)) : G.endJson({ error: "unauthorized" }, { status: 401 })
+  if (!token) throw G.error({ httpcode: 401, code: "UNAUTHORIZED", message: "unauthorized" })
+  return G.pure(verify(token))
 })
 
 G.path("/api").semiBindTap(auth).semiBind(userRoutes)
@@ -216,13 +259,68 @@ const api = G.path("/api").semiBind(userApi).alt(staticApi("./public"))
 
 支持 GET/HEAD、Range 断点续传、路径穿越防护、404/416 错误处理。
 
+### WebSocket 复用鉴权
+
+WS 升级不走路由,但鉴权规则和 HTTP 是同一套。分层是关键:`token → 鉴权信息`是纯函数(领域核心),`authed` guard 是它的 HTTP 适配层,WS 首帧直连核心——不假装自己是 HTTP:
+
+```ts
+import type { WebSocketHandler } from "bun"
+
+// 领域核心:HTTP 与 WS 的单一事实来源
+const authInfoOf = (token: string): AuthInfo | undefined => tokens.get(token)
+
+// HTTP 适配层:guard 一处定义,整棵路由树生效(内部调核心)
+const authed = (make: (auth: AuthInfo) => G<Response>): G<Response> =>
+  G.request().bind((req) => {
+    const h = req.headers.get("authorization") ?? ""
+    const info = h.startsWith("Bearer ") ? authInfoOf(h.slice(7)) : undefined
+    if (!info) throw G.error({ httpcode: 401, code: "UNAUTHORIZED", message: "未登录" })
+    return make(info)
+  })
+
+type WsData = { authed?: boolean; authTimer?: ReturnType<typeof setTimeout> }
+type WS = { data: WsData; send: (d: string) => void; close: () => void }
+
+// WS 首帧认证:直连核心,拿到的就是结果,不用造 Request、不用解析 Response
+async function authFrame(ws: WS, raw: string | Buffer) {
+  const frame = JSON.parse(String(raw))
+  if (frame.type !== "auth") return ws.close()
+  if (!authInfoOf(frame.token)) {
+    ws.send(JSON.stringify({ type: "error", message: "未登录" }))
+    return ws.close()
+  }
+  ws.data.authed = true
+  ws.send("ok")
+}
+
+const wsHandler: WebSocketHandler<WsData> = {
+  open(ws) {
+    // 10s 内未完成首帧认证则断开,防裸连堆积
+    ws.data.authTimer = setTimeout(() => {
+      if (!ws.data.authed) ws.close()
+    }, 10_000)
+  },
+  async message(ws, raw) {
+    // 认证前只认 auth 帧,业务帧一律丢弃(含恶意提前注入的帧)
+    if (!ws.data.authed) {
+      await authFrame(ws, raw)
+      return
+    }
+    // 认证后的业务帧……
+  },
+  close(ws) {
+    if (ws.data.authTimer) clearTimeout(ws.data.authTimer)
+  },
+}
+
+Bun.serve({ fetch: (req) => api.runWith404(req), websocket: wsHandler })
+```
+
+规则只活在 `authInfoOf` 里:HTTP 树走 `authed`,WS 直连核心,将来的 CLI、cron 验 token 也是同一句话。若要复用的是一整串不可拆的 guard 组合(限流+鉴权+租户),才构造带 header 的 `Request` 跑 `guard.runWith404(req)` 看状态码——那是借道适配层,仅此场景才值得。
+
 ## userData 与 responseHeaders
 
 `userData` 在组合子之间传递任意数据(如认证信息),`responseHeaders` 累积响应头,最终由 `runWith404` 写入 Response。`userData` 类型为 `any`——泛型化会让每个组合子的类型签名爆炸,得不偿失。
-
-## 依赖
-
-- `zod` — Schema 验证
 
 ## 更多
 
