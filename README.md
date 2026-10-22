@@ -27,7 +27,19 @@ Bun.serve({ fetch: (req) => hello.runWith404(req) })
 // GET /hello      → 404
 ```
 
-零依赖,只依赖 Web 标准 `Request` / `Response`,任何运行时都能跑。校验、业务逻辑的组合子由 app 层用 `bind` 自己写,几行的事(校验推荐 zod,见「校验」一节)。
+零依赖,只依赖 Web 标准 `Request` / `Response`,前后端通用:Bun/Node/Deno/Workers 里接真请求,浏览器里 SPA 路由用同一套组合子。校验、业务逻辑的组合子由 app 层用 `bind` 自己写,几行的事(校验推荐 zod,见「校验」一节)。
+
+浏览器里路由的值不必是 Response——`G<A>` 的 A 是什么由你定,视图组件也行:
+
+```ts
+const router = G.alts(
+  G.ePath("/").map(() => HomePage),
+  G.ePath("/users/:id").map(({ id }) => UserPage(id)),
+)
+
+const final = await router.run(new Request(location.href))
+if (final.cos === "final") render(final.final)  // final.final 是视图组件
+```
 
 ## 核心思想
 
