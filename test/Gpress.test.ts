@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test"
-import { G } from "../src/Gpress"
+import { G, HttpError } from "../src/Gpress"
 
 describe("G.path", () => {
   test("matches exact path", async () => {
@@ -109,11 +109,10 @@ describe("G.requestJson", () => {
       method: "POST",
       body: "not json",
     })
-    const result = await handler.run(req)
-    expect(result.cos).toBe("end")
-    if (result.cos === "end") {
-      expect(result.response.status).toBe(400)
-    }
+    const res = await handler.runWith404(req)
+    if (!(res instanceof Response)) throw new Error("expected Response")
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ code: "INVALID_JSON", message: "JSON解析失败" })
   })
 })
 
@@ -252,5 +251,81 @@ describe("runWith404", () => {
     const req = new Request("http://localhost/api")
     const res = await handler.runWith404(req)
     expect("status" in res ? res.status : 404).toBe(200)
+  })
+})
+
+describe("G.error", () => {
+  test("constructs HttpError from object", () => {
+    const e = G.error({ httpcode: 404, code: "DRAMA_NOT_FOUND", message: "短剧不存在" })
+    expect(e).toBeInstanceOf(HttpError)
+    expect(e).toBeInstanceOf(Error)
+    expect(e.httpcode).toBe(404)
+    expect(e.code).toBe("DRAMA_NOT_FOUND")
+    expect(e.message).toBe("短剧不存在")
+  })
+
+  test("httpcode defaults to 500", () => {
+    const e = G.error({ code: "ERR", message: "x" })
+    expect(e.httpcode).toBe(500)
+  })
+})
+
+describe("runWith404 错误边界", () => {
+  test("throw G.error → 对应 httpcode + {code, message}", async () => {
+    const handler = G.path("api").get().bind((): G<never> => {
+      throw G.error({ httpcode: 404, code: "DRAMA_NOT_FOUND", message: "短剧不存在" })
+    })
+    const res = await handler.runWith404(new Request("http://localhost/api"))
+    expect(res).toBeInstanceOf(Response)
+    expect(res.status).toBe(404)
+    expect(await res.json()).toEqual({ code: "DRAMA_NOT_FOUND", message: "短剧不存在" })
+  })
+
+  test("default httpcode is 500 at boundary", async () => {
+    const handler = G.unit().bind((): G<never> => {
+      throw G.error({ code: "ERR", message: "x" })
+    })
+    const res = await handler.runWith404(new Request("http://localhost/api"))
+    expect(res.status).toBe(500)
+    expect(await res.json()).toEqual({ code: "ERR", message: "x" })
+  })
+
+  test("deep plain async fn throw propagates to boundary", async () => {
+    const compose = async (id: string) => {
+      if (id === "x") throw G.error({ httpcode: 400, code: "NO_STORYBOARD", message: "还没有分镜表" })
+      return { ok: true }
+    }
+    const handler = G.unit().bind(async () => G.pureJson(await compose("x")))
+    const res = await handler.runWith404(new Request("http://localhost/api"))
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ code: "NO_STORYBOARD", message: "还没有分镜表" })
+  })
+
+  test("throw aborts alt, no backtrack", async () => {
+    const handler = G.unit()
+      .bind((): G<never> => {
+        throw G.error({ httpcode: 400, code: "ERR", message: "err" })
+      })
+      .alt(G.pureText("alt-branch"))
+    const res = await handler.runWith404(new Request("http://localhost/api"))
+    expect(res.status).toBe(400)
+    expect(await res.text()).not.toBe("alt-branch")
+  })
+
+  test("sync throw → 500 {error: Internal Server Error}", async () => {
+    const handler = G.unit().bind((): G<never> => {
+      throw new Error("boom")
+    })
+    const res = await handler.runWith404(new Request("http://localhost/api"))
+    expect(res.status).toBe(500)
+    expect(await res.json()).toEqual({ code: "INTERNAL", message: "Internal Server Error" })
+  })
+
+  test("async throw → 500", async () => {
+    const handler = G.unit().bind(async (): Promise<G<never>> => {
+      throw new Error("boom")
+    })
+    const res = await handler.runWith404(new Request("http://localhost/api"))
+    expect(res.status).toBe(500)
   })
 })

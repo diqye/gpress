@@ -1,5 +1,3 @@
-import z from "zod"
-
 export type Final<A> = {
     cos: "final",
     final: A,
@@ -18,6 +16,18 @@ export type Final<A> = {
 }
 
 type MaybePromise<T> = T | Promise<T>
+
+// 业务错误:throw G.error({...}) 抛出,由 runWith404 统一转响应
+export class HttpError extends Error {
+    httpcode: number
+    code: string
+    constructor(o: { httpcode?: number; code: string; message: string }) {
+        super(o.message)
+        this.name = "HttpError"
+        this.httpcode = o.httpcode ?? 500
+        this.code = o.code
+    }
+}
 
 // 畸形百分号序列(如 %E9)会让 decodeURIComponent 抛 URIError；返回原串让路由落到 404/参数校验而非 500
 function safeDecode(s: string): string {
@@ -73,6 +83,10 @@ export  class G<A> {
     }
     static endJson(obj:any,init?: ResponseInit) {
         return this.end(Response.json(obj,init))
+    }
+    // 业务错误构造:任意深度的普通函数都能 throw,异常通道直达 runWith404
+    static error(o: { httpcode?: number; code: string; message: string }):HttpError {
+        return new HttpError(o)
     }
     static zero<A>() {
         return this.fromHandler((req,context)=>{
@@ -347,34 +361,12 @@ export  class G<A> {
             try {
                 return G.pure(await req.json())
             } catch {
-                return G.endJson({
-                    code: "INVALID_JSON",
-                    message: "JSON解析失败"
-                },{status:400,statusText: "Invalid JSON"})
+                throw G.error({httpcode:400,code:"INVALID_JSON",message:"JSON解析失败"})
             }
         })
     }
     public requestJson() {
         return this.semiBind(G.requestJson())
-    }
-
-    static zodParse<S extends z.ZodType>(schema:S,transEnd?:(err:any)=>any) {
-        return (json:unknown):G<z.output<S>> => {
-            const parsed = schema.safeParse(json)
-            if(parsed.success == false) {
-                if(transEnd) {
-                    return G.endJson(transEnd(z.prettifyError(parsed.error))) as any
-                }
-                return G.endJson({
-                    code:"zod-error",
-                    message: z.prettifyError(parsed.error)
-                }) as any
-            }
-            return G.pure(parsed.data)
-        }
-    }
-    public zodParse<S extends z.ZodType>(schema:S) {
-        return this.bind(G.zodParse(schema))
     }
     static unit():G<void> {
         return G.pure(void 0)
@@ -504,7 +496,17 @@ export  class G<A> {
         return final
     }
     public async runWith404(request:Request,userData?:any) {
-        const final  = await this.run(request,userData)
+        let final: Final<A>
+        try {
+            final = await this.run(request,userData)
+        } catch (e) {
+            if (e instanceof HttpError) {
+                return Response.json({code:e.code,message:e.message},{status:e.httpcode})
+            }
+            // 预期外异常兜底:log 后 500,handler 里不用 try/catch
+            console.error(e)
+            return Response.json({code:"INTERNAL",message:"Internal Server Error"},{status:500})
+        }
         if(final.cos == "continue") {
             return new Response("404",{status:404,headers:{
                 ...final.responseHeaders
